@@ -1,7 +1,7 @@
 <template>
   <view class="page-shell">
     <view class="space-scene">
-      <canvas ref="sceneCanvas" class="earth-canvas" type="2d" />
+      <canvas class="earth-canvas" :canvas-id="canvasId" />
     </view>
 
     <view class="sleep-panel">
@@ -67,6 +67,7 @@ import { createEarthScene } from '../../static/js/threejs-miniprogram.js'
 export default {
   data() {
     return {
+      canvasId: 'earthCanvas',
       sceneEngine: null,
       audioCtx: null,
       isPlaying: false,
@@ -98,29 +99,31 @@ export default {
       }
     }
   },
-  mounted() {
-    this.setupAudio()
+  onReady() {
     this.setupScene()
+    this.setupAudio()
   },
   onHide() {
     this.pauseAudioSafely()
   },
-  beforeUnmount() {
+  onUnload() {
     this.cleanup()
   },
   methods: {
     setupScene() {
-      const canvas = this.$refs.sceneCanvas
-      if (!canvas) return
-
-      this.sceneEngine = createEarthScene(canvas)
+      this.sceneEngine = createEarthScene({
+        canvasId: this.canvasId,
+        vm: this
+      })
       this.sceneEngine.start()
     },
     setupAudio() {
       if (this.audioCtx) return
-
       const audio = uni.createInnerAudioContext && uni.createInnerAudioContext()
-      if (!audio) return
+      if (!audio) {
+        this.statusText = '音频组件不可用'
+        return
+      }
 
       audio.loop = true
       audio.obeyMuteSwitch = false
@@ -133,32 +136,31 @@ export default {
     },
     switchSound(key) {
       this.selectedSound = key
+      const label = this.soundList.find((item) => item.key === key)?.label || '音效'
 
       if (this.audioCtx) {
         this.audioCtx.stop()
       }
 
-      if (this.isPlaying) {
-        this.playAudio()
-      } else {
-        this.statusText = `已切换到 ${this.soundList.find((item) => item.key === key)?.label || '音效'}`
+      this.isPlaying = false
+      this.statusText = `已切换到 ${label}`
+
+      if (this.audioCtx && this.audioMap[key]) {
+        this.audioCtx.src = this.audioMap[key]
       }
     },
     togglePlay() {
       if (!this.audioCtx) {
         this.setupAudio()
       }
-
       if (!this.audioCtx) {
         this.statusText = '音频初始化失败'
         return
       }
-
       if (this.isPlaying) {
         this.pauseAudioSafely()
         return
       }
-
       this.playAudio()
     },
     playAudio() {
@@ -167,11 +169,9 @@ export default {
         this.statusText = '暂无该音效'
         return
       }
-
       if (this.audioCtx.src !== src) {
         this.audioCtx.src = src
       }
-
       this.audioCtx.play()
       this.isPlaying = true
       this.statusText = '正在播放'
@@ -185,28 +185,23 @@ export default {
     handleVolumeChange(event) {
       const value = Number(event.detail.value)
       this.volume = value
-
       if (this.audioCtx) {
         this.audioCtx.volume = Number((value / 100).toFixed(2))
       }
     },
     setTimer(minutes) {
       this.timerValue = minutes
-
       if (this.countdownTimer) {
         clearInterval(this.countdownTimer)
         this.countdownTimer = null
       }
-
       if (minutes <= 0) {
         this.timerLeft = 0
         this.statusText = '定时已关闭'
         return
       }
-
       this.timerLeft = minutes * 60
       this.statusText = `定时 ${minutes} 分钟`
-
       this.countdownTimer = setInterval(() => {
         if (this.timerLeft <= 0) {
           clearInterval(this.countdownTimer)
@@ -217,7 +212,6 @@ export default {
           this.statusText = '定时结束，已暂停'
           return
         }
-
         this.timerLeft -= 1
       }, 1000)
     },
@@ -231,11 +225,10 @@ export default {
         clearInterval(this.countdownTimer)
         this.countdownTimer = null
       }
-
       if (this.sceneEngine) {
         this.sceneEngine.stop()
+        this.sceneEngine = null
       }
-
       if (this.audioCtx) {
         this.audioCtx.stop()
         this.audioCtx.destroy && this.audioCtx.destroy()
@@ -260,8 +253,7 @@ export default {
   inset: 0;
   width: 100%;
   height: 100%;
-  background:
-    radial-gradient(circle at center, rgba(15, 28, 46, 0.8) 0%, rgba(2, 6, 12, 0.96) 56%, rgba(0, 0, 0, 1) 100%);
+  background: radial-gradient(circle at center, rgba(15, 28, 46, 0.8) 0%, rgba(2, 6, 12, 0.96) 56%, rgba(0, 0, 0, 1) 100%);
 }
 
 .earth-canvas {
@@ -272,13 +264,13 @@ export default {
 
 .sleep-panel {
   position: absolute;
-  right: 22rpx;
-  bottom: 28rpx;
-  z-index: 50;
-  width: min(76vw, 370rpx);
-  padding: 22rpx 18rpx 18rpx;
+  right: 24rpx;
+  bottom: 30rpx;
+  z-index: 10;
+  width: min(76vw, 360rpx);
+  padding: 20rpx 18rpx 18rpx;
   border-radius: 28rpx;
-  background: rgba(11, 24, 38, 0.7);
+  background: rgba(11, 24, 38, 0.72);
   border: 1px solid rgba(148, 191, 255, 0.46);
   box-shadow: 0 10rpx 26rpx rgba(14, 38, 56, 0.32);
   backdrop-filter: blur(12rpx);
@@ -288,7 +280,7 @@ export default {
   display: flex;
   flex-wrap: wrap;
   gap: 10rpx;
-  margin-bottom: 18rpx;
+  margin-bottom: 16rpx;
 }
 
 .sound-item {
@@ -323,7 +315,7 @@ export default {
 
 .play-btn {
   width: 100%;
-  min-height: 70rpx;
+  min-height: 72rpx;
   border: none;
   border-radius: 18rpx;
   background: linear-gradient(135deg, rgba(108, 153, 240, 0.84), rgba(60, 105, 196, 0.76));

@@ -1,385 +1,162 @@
-<template>
-  <view class="page-shell">
-    <view class="space-scene">
-      <canvas class="earth-canvas" canvas-id="earthCanvas" />
-    </view>
+export function createEarthScene(options) {
+  const config = typeof options === 'string' ? { canvasId: options } : options || {}
+  const canvasId = config.canvasId || 'earthCanvas'
+  const target = config.vm || null
 
-    <view class="sleep-panel">
-      <view class="sound-list">
-        <view
-          v-for="item in soundList"
-          :key="item.key"
-          class="sound-item"
-          :class="{ active: selectedSound === item.key }"
-          @click="switchSound(item.key)"
-        >
-          <text class="name">{{ item.label }}</text>
-        </view>
-      </view>
+  const state = {
+    ctx: null,
+    stars: [],
+    rafId: null,
+    width: 375,
+    height: 812,
+    rotation: 0
+  }
 
-      <view class="control-row main-action">
-        <button class="play-btn" @click="togglePlay">
-          {{ isPlaying ? '暂停' : '播放' }}
-        </button>
-      </view>
+  function generateStars() {
+    const starCount = 180
+    state.stars = Array.from({ length: starCount }, () => ({
+      x: Math.random() * state.width,
+      y: Math.random() * state.height,
+      r: Math.random() * 2.4 + 0.6,
+      alpha: Math.random() * 0.7 + 0.3,
+      speed: Math.random() * 0.4 + 0.12
+    }))
+  }
 
-      <view class="control-row volume-row">
-        <text class="label">音量</text>
-        <slider
-          class="volume-slider"
-          :value="volume"
-          :min="0"
-          :max="100"
-          activeColor="#9ab8d9"
-          backgroundColor="#23365d"
-          block-color="#effaff"
-          @change="handleVolumeChange"
-        />
-        <text class="value">{{ volume }}%</text>
-      </view>
+  function syncCanvasSize() {
+    const info = uni.getSystemInfoSync ? uni.getSystemInfoSync() : {}
+    state.width = info.windowWidth || 375
+    state.height = info.windowHeight || 812
+    generateStars()
+  }
 
-      <view class="control-row timer-row">
-        <text class="label">定时</text>
-        <view class="timer-options">
-          <view
-            v-for="item in timerOptions"
-            :key="item.value"
-            class="timer-item"
-            :class="{ active: timerValue === item.value }"
-            @click="setTimer(item.value)"
-          >
-            {{ item.label }}
-          </view>
-        </view>
-      </view>
+  function initContext() {
+    const ctx = uni.createCanvasContext(canvasId, target)
+    state.ctx = ctx
+    return ctx
+  }
 
-      <view class="status-panel">
-        <text>{{ statusText }}</text>
-        <text v-if="timerValue > 0"> · {{ formatTimer(timerLeft) }}</text>
-      </view>
-    </view>
-  </view>
-</template>
+  function drawBackground(ctx) {
+    const gradient = ctx.createRadialGradient(
+      state.width / 2,
+      state.height / 2,
+      80,
+      state.width / 2,
+      state.height / 2,
+      Math.max(state.width, state.height) * 0.7
+    )
+    gradient.addColorStop(0, 'rgba(12,20,35,0.95)')
+    gradient.addColorStop(0.55, 'rgba(3,9,18,0.97)')
+    gradient.addColorStop(1, 'rgba(0,0,0,1)')
 
-<script>
-import { createEarthScene } from '../../static/js/threejs-miniprogram.js'
+    ctx.setFillStyle(gradient)
+    ctx.fillRect(0, 0, state.width, state.height)
+  }
 
-export default {
-  data() {
-    return {
-      sceneEngine: null,
-      audioCtx: null,
-      isPlaying: false,
-      selectedSound: 'rain',
-      volume: 55,
-      timerValue: 0,
-      timerLeft: 0,
-      countdownTimer: null,
-      statusText: '未播放',
-      soundList: [
-        { key: 'rain', label: '夜雨' },
-        { key: 'wave', label: '海浪' },
-        { key: 'forest', label: '森林' },
-        { key: 'white', label: '白噪' }
-      ],
-      timerOptions: [
-        { label: '关', value: 0 },
-        { label: '15分', value: 15 },
-        { label: '30分', value: 30 },
-        { label: '45分', value: 45 },
-        { label: '60分', value: 60 },
-        { label: '90分', value: 90 }
-      ],
-      audioMap: {
-        rain: '/static/audio/night-rain.mp3',
-        wave: '/static/audio/sea-wave.mp3',
-        forest: '/static/audio/forest.mp3',
-        white: '/static/audio/white-noise.mp3'
-      }
-    }
-  },
-  onReady() {
-    this.setupScene()
-    this.setupAudio()
-  },
-  onHide() {
-    this.pauseAudioSafely()
-  },
-  onUnload() {
-    this.cleanup()
-  },
-  methods: {
-    setupScene() {
-      this.sceneEngine = createEarthScene('earthCanvas', this)
-      this.sceneEngine.start()
-    },
-    setupAudio() {
-      if (this.audioCtx) return
-      const audio = uni.createInnerAudioContext && uni.createInnerAudioContext()
-      if (!audio) {
-        this.statusText = '音频组件不可用'
-        return
-      }
+  function drawStars(ctx) {
+    for (const star of state.stars) {
+      const drift = Math.sin((state.rotation * 0.2) + star.x) * 5
+      const x = (star.x + drift + state.width) % state.width
+      const y = (star.y + star.speed * 18 + state.height) % state.height
 
-      audio.loop = true
-      audio.obeyMuteSwitch = false
-      audio.volume = Number((this.volume / 100).toFixed(2))
-      this.audioCtx = audio
-      this.audioCtx.onEnded = () => {
-        this.isPlaying = false
-        this.statusText = '已暂停'
-      }
-    },
-    switchSound(key) {
-      this.selectedSound = key
-      const label = this.soundList.find((item) => item.key === key)?.label || '音效'
-
-      if (this.audioCtx) {
-        this.audioCtx.stop()
-      }
-
-      this.isPlaying = false
-      this.statusText = `已切换到 ${label}`
-
-      if (this.audioCtx && this.audioMap[key]) {
-        this.audioCtx.src = this.audioMap[key]
-      }
-    },
-    togglePlay() {
-      if (!this.audioCtx) {
-        this.setupAudio()
-      }
-
-      if (!this.audioCtx) {
-        this.statusText = '音频初始化失败'
-        return
-      }
-
-      if (this.isPlaying) {
-        this.pauseAudioSafely()
-        return
-      }
-
-      this.playAudio()
-    },
-    playAudio() {
-      const src = this.audioMap[this.selectedSound]
-      if (!src) {
-        this.statusText = '暂无该音效'
-        return
-      }
-
-      if (this.audioCtx.src !== src) {
-        this.audioCtx.src = src
-      }
-
-      this.audioCtx.play()
-      this.isPlaying = true
-      this.statusText = '正在播放'
-    },
-    pauseAudioSafely() {
-      if (!this.audioCtx) return
-      this.audioCtx.pause()
-      this.isPlaying = false
-      this.statusText = '已暂停'
-    },
-    handleVolumeChange(event) {
-      const value = Number(event.detail.value)
-      this.volume = value
-
-      if (this.audioCtx) {
-        this.audioCtx.volume = Number((value / 100).toFixed(2))
-      }
-    },
-    setTimer(minutes) {
-      this.timerValue = minutes
-
-      if (this.countdownTimer) {
-        clearInterval(this.countdownTimer)
-        this.countdownTimer = null
-      }
-
-      if (minutes <= 0) {
-        this.timerLeft = 0
-        this.statusText = '定时已关闭'
-        return
-      }
-
-      this.timerLeft = minutes * 60
-      this.statusText = `定时 ${minutes} 分钟`
-
-      this.countdownTimer = setInterval(() => {
-        if (this.timerLeft <= 0) {
-          clearInterval(this.countdownTimer)
-          this.countdownTimer = null
-          this.timerLeft = 0
-          this.timerValue = 0
-          this.pauseAudioSafely()
-          this.statusText = '定时结束，已暂停'
-          return
-        }
-
-        this.timerLeft -= 1
-      }, 1000)
-    },
-    formatTimer(seconds) {
-      const minute = Math.floor(seconds / 60)
-      const second = seconds % 60
-      return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
-    },
-    cleanup() {
-      if (this.countdownTimer) {
-        clearInterval(this.countdownTimer)
-        this.countdownTimer = null
-      }
-
-      if (this.sceneEngine) {
-        this.sceneEngine.stop()
-        this.sceneEngine = null
-      }
-
-      if (this.audioCtx) {
-        this.audioCtx.stop()
-        this.audioCtx.destroy && this.audioCtx.destroy()
-        this.audioCtx = null
-      }
+      ctx.beginPath()
+      ctx.setFillStyle(`rgba(255,255,255,${star.alpha})`)
+      ctx.arc(x, y, star.r, 0, Math.PI * 2)
+      ctx.fill()
     }
   }
-}
-</script>
 
-<style scoped>
-.page-shell {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  background: radial-gradient(circle at center, #07131f 0%, #03060b 42%, #000 100%);
-}
+  function drawEarth(ctx) {
+    const cx = state.width / 2
+    const cy = state.height / 2
+    const radius = Math.min(state.width, state.height) * 0.27
 
-.space-scene {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  background:
-    radial-gradient(circle at center, rgba(15, 28, 46, 0.8) 0%, rgba(2, 6, 12, 0.96) 56%, rgba(0, 0, 0, 1) 100%);
-}
+    const glow = ctx.createRadialGradient(cx, cy, radius * 0.12, cx, cy, radius * 1.5)
+    glow.addColorStop(0, 'rgba(94,159,255,0.55)')
+    glow.addColorStop(0.35, 'rgba(25,74,128,0.30)')
+    glow.addColorStop(1, 'rgba(0,0,0,0)')
 
-.earth-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
+    ctx.setFillStyle(glow)
+    ctx.beginPath()
+    ctx.arc(cx, cy, radius * 1.45, 0, Math.PI * 2)
+    ctx.fill()
 
-.sleep-panel {
-  position: absolute;
-  right: 22rpx;
-  bottom: 28rpx;
-  z-index: 50;
-  width: min(76vw, 380rpx);
-  padding: 22rpx 18rpx 18rpx;
-  border-radius: 28rpx;
-  background: rgba(11, 24, 38, 0.72);
-  border: 1px solid rgba(148, 191, 255, 0.46);
-  box-shadow: 0 10rpx 26rpx rgba(14, 38, 56, 0.32);
-  backdrop-filter: blur(12rpx);
-}
+    ctx.beginPath()
+    ctx.setFillStyle('#0d2445')
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+    ctx.fill()
 
-.sound-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10rpx;
-  margin-bottom: 18rpx;
-}
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+    ctx.clip()
 
-.sound-item {
-  flex: 1 1 30%;
-  min-width: 84rpx;
-  padding: 10rpx 8rpx;
-  border-radius: 14rpx;
-  background: rgba(32, 48, 70, 0.54);
-  border: 1px solid rgba(120, 149, 188, 0.34);
-  text-align: center;
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 22rpx;
-}
+    const ocean = ctx.createRadialGradient(
+      cx - radius * 0.38,
+      cy - radius * 0.42,
+      radius * 0.2,
+      cx,
+      cy,
+      radius
+    )
+    ocean.addColorStop(0, '#5ea8ff')
+    ocean.addColorStop(0.35, '#1a486f')
+    ocean.addColorStop(0.7, '#0d2038')
+    ocean.addColorStop(1, '#030a14')
+    ctx.setFillStyle(ocean)
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2)
 
-.sound-item.active {
-  background: rgba(75, 117, 180, 0.58);
-  border-color: rgba(188, 219, 255, 0.9);
-  color: #fff;
-  box-shadow: 0 0 8rpx rgba(161, 201, 255, 0.52);
-}
+    for (let i = 0; i < 180; i++) {
+      const a = (i / 180) * Math.PI * 2 + state.rotation * 1.4
+      const x = cx + Math.cos(a) * radius * (0.85 + (i % 7) * 0.015)
+      const y = cy + Math.sin(a) * radius * 0.78
+      const isNight = Math.sin(a + state.rotation) < 0
 
-.control-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 16rpx;
-}
+      if (isNight) {
+        ctx.beginPath()
+        ctx.setFillStyle('rgba(255, 203, 92, 0.9)')
+        ctx.arc(x, y, 3.6, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
 
-.main-action {
-  justify-content: center;
-}
+    ctx.restore()
 
-.play-btn {
-  width: 100%;
-  min-height: 70rpx;
-  border: none;
-  border-radius: 18rpx;
-  background: linear-gradient(135deg, rgba(108, 153, 240, 0.84), rgba(60, 105, 196, 0.76));
-  color: #fff;
-  font-size: 28rpx;
-  font-weight: 600;
-}
+    ctx.beginPath()
+    ctx.setStrokeStyle('rgba(173, 221, 255, 0.18)')
+    ctx.lineWidth = 2
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+    ctx.stroke()
+  }
 
-.label,
-.value {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 22rpx;
-}
+  function render() {
+    const ctx = state.ctx || initContext()
+    if (!ctx) return
 
-.volume-row {
-  gap: 12rpx;
-}
+    drawBackground(ctx)
+    drawStars(ctx)
+    drawEarth(ctx)
+    ctx.draw(true)
 
-.volume-slider {
-  flex: 1;
-}
+    state.rotation += 0.012
+    state.rafId = setTimeout(render, 16)
+  }
 
-.timer-row {
-  flex-direction: column;
-  align-items: flex-start;
-}
+  function start() {
+    syncCanvasSize()
+    initContext()
+    render()
+  }
 
-.timer-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8rpx;
-  margin-top: 10rpx;
-}
+  function stop() {
+    if (state.rafId) {
+      clearTimeout(state.rafId)
+      state.rafId = null
+    }
+  }
 
-.timer-item {
-  padding: 8rpx 12rpx;
-  border-radius: 12rpx;
-  background: rgba(32, 48, 70, 0.6);
-  border: 1px solid rgba(130, 160, 200, 0.4);
-  font-size: 20rpx;
-  color: rgba(255, 255, 255, 0.8);
+  return {
+    start,
+    stop
+  }
 }
-
-.timer-item.active {
-  background: rgba(91, 130, 191, 0.6);
-  border-color: rgba(193, 223, 255, 0.85);
-  color: #fff;
-}
-
-.status-panel {
-  margin-top: 16rpx;
-  padding-top: 12rpx;
-  font-size: 20rpx;
-  color: rgba(220, 235, 255, 0.88);
-  border-top: 1px solid rgba(167, 190, 228, 0.28);
-}
-</style>
